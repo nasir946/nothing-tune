@@ -287,4 +287,75 @@ class MusicRepository(private val context: Context) {
     fun setAccentColorInt(color: Int) {
         prefs.edit().putInt("accent_color", color).apply()
     }
+
+    // ── User Playlists ────────────────────────────────────────────────────────
+
+    fun getUserPlaylistNames(): List<String> {
+        val raw = prefs.getString("user_playlist_names", "") ?: ""
+        if (raw.isBlank()) return emptyList()
+        return raw.split(";").filter { it.isNotBlank() }
+    }
+
+    fun createUserPlaylist(name: String): Boolean {
+        val trimmed = name.trim()
+        if (trimmed.isBlank()) return false
+        val current = getUserPlaylistNames().toMutableList()
+        if (current.contains(trimmed)) return false
+        current.add(trimmed)
+        prefs.edit().putString("user_playlist_names", current.joinToString(";")).apply()
+        return true
+    }
+
+    fun deleteUserPlaylist(name: String) {
+        val current = getUserPlaylistNames().toMutableList()
+        current.remove(name)
+        prefs.edit()
+            .putString("user_playlist_names", current.joinToString(";"))
+            .remove("playlist_tracks_$name")
+            .apply()
+    }
+
+    fun addTrackToPlaylist(playlistName: String, trackId: Long) {
+        val current = getPlaylistTrackIds(playlistName).toMutableList()
+        if (!current.contains(trackId)) {
+            current.add(trackId)
+            prefs.edit().putString("playlist_tracks_$playlistName", current.joinToString(",")).apply()
+        }
+    }
+
+    fun removeTrackFromPlaylist(playlistName: String, trackId: Long) {
+        val current = getPlaylistTrackIds(playlistName).toMutableList()
+        current.remove(trackId)
+        prefs.edit().putString("playlist_tracks_$playlistName", current.joinToString(",")).apply()
+    }
+
+    fun getPlaylistTrackIds(playlistName: String): List<Long> {
+        val raw = prefs.getString("playlist_tracks_$playlistName", "") ?: ""
+        if (raw.isBlank()) return emptyList()
+        return raw.split(",").mapNotNull { it.trim().toLongOrNull() }
+    }
+
+    fun getPlaylistTracks(playlistName: String, allTracks: List<MusicTrack>): List<MusicTrack> {
+        val ids = getPlaylistTrackIds(playlistName)
+        val trackMap = allTracks.associateBy { it.id }
+        return ids.mapNotNull { trackMap[it] }
+    }
+
+    // ── Playback State Restoration ────────────────────────────────────────────
+
+    fun saveLastPlaybackState(trackId: Long, positionMs: Long) {
+        prefs.edit()
+            .putLong("last_track_id", trackId)
+            .putLong("last_track_pos", positionMs)
+            .apply()
+    }
+
+    fun getLastPlaybackTrackId(): Long? {
+        val id = prefs.getLong("last_track_id", -1L)
+        return if (id > 0) id else null
+    }
+
+    fun getLastPlaybackPositionMs(): Long {
+        return prefs.getLong("last_track_pos", 0L)
+    }
 }

@@ -174,15 +174,33 @@ object OnlineMediaExtractor {
 
     fun startDownload(context: Context, media: ExtractedAudioMedia): Long {
         val downloadManager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-        val cleanTitle = media.title.replace(Regex("[^a-zA-Z0-9.-]"), "_")
-        val fileName = "$cleanTitle.mp3"
+        val cleanTitle = media.title.replace(Regex("[^a-zA-Z0-9.-]"), "_").ifBlank { "track" }
+
+        val ext = when {
+            media.downloadUrl.contains(".flac", ignoreCase = true) -> "flac"
+            media.downloadUrl.contains(".wav", ignoreCase = true) -> "wav"
+            media.downloadUrl.contains(".m4a", ignoreCase = true) -> "m4a"
+            media.downloadUrl.contains(".ogg", ignoreCase = true) -> "ogg"
+            media.downloadUrl.contains(".opus", ignoreCase = true) -> "opus"
+            else -> "mp3"
+        }
+
+        val mime = when (ext) {
+            "flac" -> "audio/flac"
+            "wav" -> "audio/wav"
+            "m4a" -> "audio/mp4"
+            "ogg", "opus" -> "audio/ogg"
+            else -> "audio/mpeg"
+        }
+
+        val fileName = "$cleanTitle.$ext"
 
         val request = DownloadManager.Request(Uri.parse(media.downloadUrl)).apply {
             setTitle(media.title)
             setDescription("Downloading from ${media.platform} via NothingTune")
             setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
             setDestinationInExternalPublicDir(Environment.DIRECTORY_MUSIC, "NothingTune/$fileName")
-            setMimeType("audio/mpeg")
+            setMimeType(mime)
             setAllowedOverMetered(true)
             setAllowedOverRoaming(true)
         }

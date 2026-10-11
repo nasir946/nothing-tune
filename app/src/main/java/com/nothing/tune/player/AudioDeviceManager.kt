@@ -48,30 +48,31 @@ class AudioDeviceManager(private val context: Context) {
     }
 
     fun refreshDevices() {
-        val outputs = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
         val list = mutableListOf<ConnectedAudioDevice>()
+        try {
+            val outputs = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+            for (dev in outputs) {
+                val isBt = isBluetoothDevice(dev.type)
+                val typeName = getDeviceTypeName(dev.type)
+                val name = try {
+                    if (dev.productName.isNotBlank()) dev.productName.toString() else typeName
+                } catch (_: Throwable) {
+                    typeName
+                }
 
-        for (dev in outputs) {
-            val isBt = isBluetoothDevice(dev.type)
-            val typeName = getDeviceTypeName(dev.type)
-            val name = if (dev.productName.isNotBlank()) {
-                dev.productName.toString()
-            } else {
-                typeName
-            }
-
-            list.add(
-                ConnectedAudioDevice(
-                    id = dev.id,
-                    name = name,
-                    type = dev.type,
-                    typeName = typeName,
-                    isBluetooth = isBt,
-                    isSelected = isBt || dev.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER,
-                    isDefault = dev.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+                list.add(
+                    ConnectedAudioDevice(
+                        id = dev.id,
+                        name = name,
+                        type = dev.type,
+                        typeName = typeName,
+                        isBluetooth = isBt,
+                        isSelected = isBt || dev.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER,
+                        isDefault = dev.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+                    )
                 )
-            )
-        }
+            }
+        } catch (_: Throwable) {}
 
         // If no devices detected (or in preview), provide fallback entries
         if (list.isEmpty()) {

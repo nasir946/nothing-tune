@@ -1,40 +1,50 @@
 package com.nothing.tune.player
 
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
 import android.media.audiofx.Visualizer
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlin.math.hypot
 import kotlin.math.sin
 
-class RealtimeAudioVisualizer {
+class RealtimeAudioVisualizer(private val context: Context? = null) {
 
     private var visualizer: Visualizer? = null
     private var currentSessionId: Int = 0
 
     private val barCount = 26
-    private val _frequencyBands = MutableStateFlow(FloatArray(barCount) { 0.15f })
+    private val _frequencyBands = MutableStateFlow(FloatArray(barCount) { 0.12f })
     val frequencyBands: StateFlow<FloatArray> = _frequencyBands.asStateFlow()
 
-    private val smoothedValues = FloatArray(barCount) { 0.15f }
+    private val smoothedValues = FloatArray(barCount) { 0.12f }
 
     fun attachSession(sessionId: Int) {
         if (sessionId <= 0 || sessionId == currentSessionId) return
         release()
         currentSessionId = sessionId
 
+        // Verify audio recording permission before initializing hardware Visualizer
+        if (context != null && ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            return
+        }
+
         try {
+            val range = Visualizer.getCaptureSizeRange()
+            val capSize = 256.coerceIn(range[0], range[1])
+
             val viz = Visualizer(sessionId).apply {
-                captureSize = 256.coerceIn(Visualizer.getCaptureSizeRange()[0], Visualizer.getCaptureSizeRange()[1])
+                captureSize = capSize
                 setDataCaptureListener(
                     object : Visualizer.OnDataCaptureListener {
                         override fun onWaveFormDataCapture(
                             visualizer: Visualizer?,
                             waveform: ByteArray?,
                             samplingRate: Int
-                        ) {
-                            // Waveform PCM data capture (amplitude peaks)
-                        }
+                        ) {}
 
                         override fun onFftDataCapture(
                             visualizer: Visualizer?,
@@ -53,7 +63,7 @@ class RealtimeAudioVisualizer {
             }
             visualizer = viz
         } catch (_: Throwable) {
-            // Permission or hardware unsupported, will use dynamic rhythm synthesizer
+            // Hardware unsupported or restricted, dynamic frequency generator will take over
         }
     }
 
@@ -76,15 +86,15 @@ class RealtimeAudioVisualizer {
             }
 
             val avgMag = if (count > 0) (sumMag / count) / 100f else 0f
-            // Bass bands (lower i) naturally have more energy, scale higher frequencies
-            val boost = 1.0f + (i.toFloat() / barCount.toFloat()) * 1.6f
+            // Low pitch (bass/kick drum) scaling vs high pitch (treble) boost
+            val boost = 1.0f + (i.toFloat() / barCount.toFloat()) * 1.5f
             val target = (avgMag * boost).coerceIn(0.12f, 1.0f)
 
-            // Smooth attack & decay for organic motion
+            // Attack & Decay smoothing for responsive, organic visual response
             smoothedValues[i] = if (target > smoothedValues[i]) {
-                smoothedValues[i] * 0.4f + target * 0.6f
+                smoothedValues[i] * 0.35f + target * 0.65f
             } else {
-                smoothedValues[i] * 0.82f + target * 0.18f
+                smoothedValues[i] * 0.80f + target * 0.20f
             }
             newValues[i] = smoothedValues[i]
         }
@@ -93,26 +103,35 @@ class RealtimeAudioVisualizer {
     }
 
     fun updateSimulatedFrame(isPlaying: Boolean, timeMs: Long) {
-        if (visualizer != null) return // Using real hardware FFT
+        if (visualizer != null && isPlaying) return // Using real hardware FFT
 
         if (!isPlaying) {
-            _frequencyBands.value = FloatArray(barCount) { 0.12f }
+            // Smoothly decay all bars down to resting line
+            var hasActivity = false
+            val decayed = FloatArray(barCount)
+            for (i in 0 until barCount) {
+                smoothedValues[i] = (smoothedValues[i] * 0.75f).coerceAtLeast(0.12f)
+                decayed[i] = smoothedValues[i]
+                if (smoothedValues[i] > 0.13f) hasActivity = true
+            }
+            if (hasActivity || _frequencyBands.value[0] > 0.12f) {
+                _frequencyBands.value = decayed
+            }
             return
         }
 
         val t = timeMs / 1000.0
         val arr = FloatArray(barCount)
 
-        // Beat rhythm pulses on low frequencies (kick drum)
         val beatPulse = (sin(t * 8.5) * 0.5 + 0.5).toFloat()
         val snarePulse = (sin(t * 4.25) * 0.5 + 0.5).toFloat()
 
         for (i in 0 until barCount) {
             val fraction = i.toFloat() / barCount.toFloat()
             val valAtFreq = when {
-                fraction < 0.25f -> 0.3f + 0.65f * beatPulse * (sin(t * 12.0 + i) * 0.3f + 0.7f).toFloat() // Bass / Low pitch
+                fraction < 0.25f -> 0.3f + 0.65f * beatPulse * (sin(t * 12.0 + i) * 0.3f + 0.7f).toFloat() // Low pitch (bass)
                 fraction < 0.65f -> 0.25f + 0.55f * snarePulse * (sin(t * 16.0 + i * 2) * 0.4f + 0.6f).toFloat() // Mid pitch
-                else -> 0.2f + 0.6f * (sin(t * 22.0 + i * 3) * 0.5f + 0.5f).toFloat() // High pitch / Treble
+                else -> 0.2f + 0.6f * (sin(t * 22.0 + i * 3) * 0.5f + 0.5f).toFloat() // High pitch (treble)
             }
             arr[i] = valAtFreq.coerceIn(0.15f, 0.98f)
         }

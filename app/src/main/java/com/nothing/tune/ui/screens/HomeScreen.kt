@@ -42,6 +42,8 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -93,6 +95,7 @@ fun HomeScreen(
     var showFilterSortSheet by remember { mutableStateOf(false) }
     var filterSortState by remember { mutableStateOf(FilterSortState()) }
     var trackToHide by remember { mutableStateOf<MusicTrack?>(null) }
+    var trackToAddToPlaylist by remember { mutableStateOf<MusicTrack?>(null) }
 
     // Apply active filter and sort
     val processedTracks = remember(tracks, filterSortState) {
@@ -252,7 +255,8 @@ fun HomeScreen(
                 onToggleFavorite = onToggleFavorite,
                 onToggleAudiobook = onToggleAudiobook,
                 onHideTrack = { trackToHide = it },
-                onAddToQueue = { controller.addToQueue(it) }
+                onAddToQueue = { controller.addToQueue(it) },
+                onAddToPlaylist = { trackToAddToPlaylist = it }
             )
 
             1 -> AudiobooksContent(
@@ -270,6 +274,7 @@ fun HomeScreen(
                 tracks = processedTracks,
                 recentlyPlayed = recentlyPlayed,
                 mostPlayed = mostPlayed,
+                repository = repository,
                 onOpenPlaylist = onOpenPlaylistDetail
             )
 
@@ -328,6 +333,58 @@ fun HomeScreen(
             }
         )
     }
+
+    // ── Dialog to Add Track to Playlist ────────────────────────────────────────
+    trackToAddToPlaylist?.let { targetTrack ->
+        val userPlaylists = repository.getUserPlaylistNames()
+        AlertDialog(
+            onDismissRequest = { trackToAddToPlaylist = null },
+            title = { Text("Add to Playlist", color = Color.White, fontWeight = FontWeight.Bold) },
+            containerColor = Color(0xFF1E1E22),
+            text = {
+                Column {
+                    Text(
+                        text = "Choose playlist for \"${targetTrack.title}\":",
+                        color = Color(0xFFAAAAAA),
+                        fontSize = 13.sp
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    if (userPlaylists.isEmpty()) {
+                        Text(
+                            text = "No custom playlists yet. Go to Playlists tab to create one.",
+                            color = Color(0xFF888888),
+                            fontSize = 12.sp
+                        )
+                    } else {
+                        userPlaylists.forEach { pName ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        repository.addTrackToPlaylist(pName, targetTrack.id)
+                                        trackToAddToPlaylist = null
+                                    }
+                                    .padding(vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = pName,
+                                    color = Color.White,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { trackToAddToPlaylist = null }) {
+                    Text("Close", color = Color.White)
+                }
+            }
+        )
+    }
 }
 
 // ── FOR YOU TAB CONTENT ────────────────────────────────────────────────────────
@@ -344,7 +401,8 @@ private fun ForYouContent(
     onToggleFavorite: (Long, Boolean) -> Unit,
     onToggleAudiobook: (Long, Boolean) -> Unit,
     onHideTrack: (MusicTrack) -> Unit,
-    onAddToQueue: (MusicTrack) -> Unit
+    onAddToQueue: (MusicTrack) -> Unit,
+    onAddToPlaylist: (MusicTrack) -> Unit
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -639,6 +697,13 @@ private fun ForYouContent(
                             }
                         )
                         DropdownMenuItem(
+                            text = { Text("Add to Playlist...", color = Color.White) },
+                            onClick = {
+                                menuExpanded = false
+                                onAddToPlaylist(track)
+                            }
+                        )
+                        DropdownMenuItem(
                             text = {
                                 Text(
                                     if (track.isAudiobook) "Remove Audiobook Mark" else "Mark / Add as Book",
@@ -862,9 +927,18 @@ private fun PlaylistsContent(
     tracks: List<MusicTrack>,
     recentlyPlayed: List<MusicTrack>,
     mostPlayed: List<MusicTrack>,
+    repository: MusicRepository,
     onOpenPlaylist: (String, List<MusicTrack>) -> Unit
 ) {
-    val playlists = listOf(
+    var showCreateDialog by remember { mutableStateOf(false) }
+    var newPlaylistTitle by remember { mutableStateOf("") }
+    var playlistVersion by remember { mutableIntStateOf(0) }
+
+    val userPlaylistNames = remember(playlistVersion) {
+        repository.getUserPlaylistNames()
+    }
+
+    val defaultPlaylists = listOf(
         Pair("Favorites", tracks.filter { it.isFavorite }.ifEmpty { tracks.take(5) }),
         Pair("Most Played", mostPlayed),
         Pair("Recently Played", recentlyPlayed),
@@ -876,11 +950,114 @@ private fun PlaylistsContent(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 100.dp)
     ) {
-        items(playlists) { (title, pTracks) ->
+        // Create Playlist Action Button
+        item {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 8.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color(0xFF1E1E22))
+                    .border(1.dp, Color(0xFF2E2E32), RoundedCornerShape(16.dp))
+                    .clickable { showCreateDialog = true }
+                    .padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(CircleShape)
+                        .background(Color.White),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("+", color = Color.Black, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                }
+                Spacer(modifier = Modifier.width(14.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Create New Playlist",
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Organize custom collections",
+                        color = Color(0xFF888888),
+                        fontSize = 12.sp
+                    )
+                }
+            }
+        }
+
+        // User Custom Playlists
+        if (userPlaylistNames.isNotEmpty()) {
+            item {
+                Text(
+                    text = "My Custom Playlists",
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(top = 10.dp, bottom = 6.dp)
+                )
+            }
+
+            items(userPlaylistNames) { pName ->
+                val pTracks = repository.getPlaylistTracks(pName, tracks)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 6.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color(0xFF141416))
+                        .border(1.dp, Color(0xFF262628), RoundedCornerShape(14.dp))
+                        .clickable { onOpenPlaylist(pName, pTracks) }
+                        .padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    NothingArtwork(
+                        track = pTracks.firstOrNull(),
+                        modifier = Modifier.size(50.dp),
+                        cornerRadius = 12.dp,
+                        seed = pName.hashCode()
+                    )
+                    Spacer(modifier = Modifier.width(14.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(text = pName, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Text(text = "${pTracks.size} tracks", color = Color(0xFF888888), fontSize = 12.sp)
+                    }
+                    IconButton(
+                        onClick = {
+                            repository.deleteUserPlaylist(pName)
+                            playlistVersion++
+                        }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "Delete Playlist",
+                            tint = Color(0xFF666666),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        // Default Playlists
+        item {
+            Text(
+                text = "Auto Collections",
+                color = Color.White,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(top = 14.dp, bottom = 6.dp)
+            )
+        }
+
+        items(defaultPlaylists) { (title, pTracks) ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 6.dp)
                     .clip(RoundedCornerShape(14.dp))
                     .background(Color(0xFF141416))
                     .border(1.dp, Color(0xFF242426), RoundedCornerShape(14.dp))
@@ -890,7 +1067,7 @@ private fun PlaylistsContent(
             ) {
                 NothingArtwork(
                     track = pTracks.firstOrNull(),
-                    modifier = Modifier.size(54.dp),
+                    modifier = Modifier.size(50.dp),
                     cornerRadius = 12.dp,
                     seed = title.hashCode()
                 )
@@ -916,6 +1093,47 @@ private fun PlaylistsContent(
                 )
             }
         }
+    }
+
+    if (showCreateDialog) {
+        AlertDialog(
+            onDismissRequest = { showCreateDialog = false },
+            title = { Text("New Playlist", color = Color.White, fontWeight = FontWeight.Bold) },
+            containerColor = Color(0xFF1E1E22),
+            text = {
+                OutlinedTextField(
+                    value = newPlaylistTitle,
+                    onValueChange = { newPlaylistTitle = it },
+                    placeholder = { Text("Enter playlist name", color = Color.Gray) },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = Color.White,
+                        unfocusedBorderColor = Color(0xFF333336)
+                    )
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (newPlaylistTitle.isNotBlank()) {
+                            repository.createUserPlaylist(newPlaylistTitle.trim())
+                            playlistVersion++
+                            newPlaylistTitle = ""
+                            showCreateDialog = false
+                        }
+                    }
+                ) {
+                    Text("Create", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCreateDialog = false }) {
+                    Text("Cancel", color = Color.Gray)
+                }
+            }
+        )
     }
 }
 

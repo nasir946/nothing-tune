@@ -1,13 +1,20 @@
 package com.nothing.tune.player
 
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.content.SharedPreferences
 import android.media.audiofx.BassBoost
 import android.media.audiofx.Equalizer
 import android.media.audiofx.Virtualizer
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.session.MediaSession
+import com.nothing.tune.MainActivity
 import com.nothing.tune.data.MusicRepository
 import com.nothing.tune.data.MusicTrack
 import kotlinx.coroutines.CoroutineScope
@@ -49,7 +56,19 @@ class AudioPlayerController(
     private val context: Context,
     private val repository: MusicRepository
 ) {
-    val player: ExoPlayer = ExoPlayer.Builder(context.applicationContext).build()
+    private val audioAttributes = AudioAttributes.Builder()
+        .setUsage(C.USAGE_MEDIA)
+        .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+        .build()
+
+    val player: ExoPlayer = ExoPlayer.Builder(context.applicationContext)
+        .setAudioAttributes(audioAttributes, true)
+        .setHandleAudioBecomingNoisy(true)
+        .setWakeMode(C.WAKE_MODE_LOCAL)
+        .build()
+
+    val mediaSession: MediaSession
+
     private val scope = CoroutineScope(Dispatchers.Main + Job())
 
     private val prefs: SharedPreferences =
@@ -58,7 +77,7 @@ class AudioPlayerController(
     private val _uiState = MutableStateFlow(PlayerUiState())
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
 
-    val visualizer = RealtimeAudioVisualizer()
+    val visualizer = RealtimeAudioVisualizer(context)
 
     private var equalizer: Equalizer? = null
     private var bassBoostEffect: BassBoost? = null
@@ -70,6 +89,21 @@ class AudioPlayerController(
 
     init {
         activeInstance = this
+
+        val sessionActivityIntent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val sessionActivityPendingIntent = PendingIntent.getActivity(
+            context,
+            0,
+            sessionActivityIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        mediaSession = MediaSession.Builder(context.applicationContext, player)
+            .setSessionActivity(sessionActivityPendingIntent)
+            .build()
+
         loadSavedEqSettings()
         setupPlayerListeners()
         startProgressPolling()
@@ -98,13 +132,13 @@ class AudioPlayerController(
         player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 _uiState.value = _uiState.value.copy(isPlaying = isPlaying)
-                PlaybackService.updateNotification(context, _uiState.value.currentTrack, isPlaying)
                 if (!isPlaying) {
-                    saveAudiobookProgress()
+                    savePlaybackState()
                 } else {
                     ensureAudioEffects()
                     _uiState.value.currentTrack?.let { track ->
                         repository.recordTrackPlayed(track.id)
+                        repository.saveLastPlaybackState(track.id, player.currentPosition)
                     }
                 }
             }
@@ -115,7 +149,6 @@ class AudioPlayerController(
                         durationMs = player.duration.coerceAtLeast(0L)
                     )
                     ensureAudioEffects()
-                    PlaybackService.updateNotification(context, _uiState.value.currentTrack, _uiState.value.isPlaying)
                 } else if (playbackState == Player.STATE_ENDED) {
                     if (_uiState.value.stopAfterCurrentSong) {
                         player.pause()
@@ -125,6 +158,16 @@ class AudioPlayerController(
                     }
                 }
             }
+
+            override fun onPositionDiscontinuity(
+                oldPosition: Player.PositionInfo,
+                newPosition: Player.PositionInfo,
+                reason: Int
+            ) {
+                _uiState.value = _uiState.value.copy(
+                    currentPositionMs = player.currentPosition.coerceAtLeast(0L)
+                )
+            }
         })
     }
 
@@ -133,10 +176,8 @@ class AudioPlayerController(
         if (sessionId <= 0) return
 
         try {
-            // Hook up visualizer
             visualizer.attachSession(sessionId)
 
-            // Equalizer with high priority so system does not discard settings
             if (equalizer == null || audioEffectsInitialized.not()) {
                 equalizer = Equalizer(1000, sessionId)
                 bassBoostEffect = BassBoost(1000, sessionId)
@@ -157,7 +198,6 @@ class AudioPlayerController(
                         eqFreqs = if (actualFreqs.isNotEmpty()) actualFreqs else _uiState.value.eqFreqs
                     )
 
-                    // Reapply user saved levels to hardware
                     reapplyEqToHardware()
                 }
 
@@ -176,7 +216,7 @@ class AudioPlayerController(
                 reapplyEqToHardware()
             }
         } catch (_: Throwable) {
-            // AudioFX not supported on some hardware
+            // AudioFX unsupported on some hardware
         }
     }
 
@@ -217,7 +257,7 @@ class AudioPlayerController(
     }
 
     fun playTrack(track: MusicTrack, queue: List<MusicTrack>? = null, index: Int = 0) {
-        saveAudiobookProgress()
+        savePlaybackState()
 
         val activeQueue = queue ?: if (_uiState.value.queue.isNotEmpty()) _uiState.value.queue else listOf(track)
         val activeIndex = if (queue != null) index else {
@@ -231,7 +271,22 @@ class AudioPlayerController(
             queueIndex = activeIndex
         )
 
-        val mediaItem = MediaItem.fromUri(track.uri)
+        // Build MediaItem with rich MediaMetadata for Samsung One UI 9 & Android SystemUI
+        val metadata = MediaMetadata.Builder()
+            .setTitle(track.title)
+            .setArtist(track.artist)
+            .setAlbumTitle(track.album)
+            .setArtworkUri(track.artworkUri)
+            .setDisplayTitle(track.title)
+            .setIsPlayable(true)
+            .build()
+
+        val mediaItem = MediaItem.Builder()
+            .setMediaId(track.id.toString())
+            .setUri(track.uri)
+            .setMediaMetadata(metadata)
+            .build()
+
         player.setMediaItem(mediaItem)
 
         val startPos = if (track.isAudiobook && track.audiobookPositionMs > 0) {
@@ -244,7 +299,12 @@ class AudioPlayerController(
         player.prepare()
         player.play()
         repository.recordTrackPlayed(track.id)
-        PlaybackService.updateNotification(context, track, true)
+
+        // Ensure MediaSessionService is running so SystemUI connects
+        try {
+            val serviceIntent = Intent(context, PlaybackService::class.java)
+            context.startService(serviceIntent)
+        } catch (_: Throwable) {}
     }
 
     fun playStreamUrl(url: String, title: String) {
@@ -266,7 +326,6 @@ class AudioPlayerController(
         } else {
             player.play()
         }
-        PlaybackService.updateNotification(context, _uiState.value.currentTrack, player.isPlaying)
     }
 
     fun seekTo(positionMs: Long) {
@@ -484,19 +543,21 @@ class AudioPlayerController(
         _uiState.value = _uiState.value.copy(currentPreset = presetName)
     }
 
-    private fun saveAudiobookProgress() {
+    private fun savePlaybackState() {
         val track = _uiState.value.currentTrack ?: return
+        repository.saveLastPlaybackState(track.id, player.currentPosition)
         if (track.isAudiobook) {
             repository.saveAudiobookProgress(track.id, player.currentPosition)
         }
     }
 
     fun release() {
-        saveAudiobookProgress()
+        savePlaybackState()
         progressJob?.cancel()
         sleepTimerJob?.cancel()
         visualizer.release()
         try {
+            mediaSession.release()
             equalizer?.release()
             bassBoostEffect?.release()
             virtualizerEffect?.release()

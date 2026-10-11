@@ -111,6 +111,15 @@ class MainActivity : ComponentActivity() {
 
                 LaunchedEffect(Unit) {
                     tracks = repository.loadTracks()
+                    val lastTrackId = repository.getLastPlaybackTrackId()
+                    if (lastTrackId != null && controller.uiState.value.currentTrack == null) {
+                        val lastTrack = tracks.firstOrNull { it.id == lastTrackId }
+                        if (lastTrack != null) {
+                            val lastPos = repository.getLastPlaybackPositionMs()
+                            controller.playTrack(lastTrack.copy(audiobookPositionMs = lastPos))
+                            controller.player.pause()
+                        }
+                    }
                     onPermissionGrantedCallback = {
                         lifecycleScope.launch {
                             tracks = repository.loadTracks()
