@@ -1,0 +1,87 @@
+name: nothing_tune
+description: Nothing OS-themed Hi-Res music player for Android
+
+publish_to: none
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # ── Audio ──────────────────────────────────────────────────────────────────
+  just_audio: ^0.9.39
+  just_audio_background: ^0.0.1-beta.11
+  audio_service: ^0.18.12
+  audio_session: ^0.1.18
+
+  # ── Database ───────────────────────────────────────────────────────────────
+  isar: ^3.1.0+1
+  isar_flutter_libs: ^3.1.0+1
+  path_provider: ^2.1.2
+
+  # ── State Management ───────────────────────────────────────────────────────
+  flutter_riverpod: ^2.5.1
+  riverpod_annotation: ^2.3.5
+
+  # ── HTTP / Networking ──────────────────────────────────────────────────────
+  dio: ^5.4.3+1
+  flutter_cache_manager: ^3.3.1
+
+  # ── Metadata ───────────────────────────────────────────────────────────────
+  metadata_god: ^0.6.1          # ID3 / Vorbis / FLAC tag reader+writer
+  youtube_explode_dart: ^2.2.0  # YouTube info fallback (pure Dart)
+
+  # ── UI / Fonts ─────────────────────────────────────────────────────────────
+  google_fonts: ^6.2.1
+  dynamic_color: ^1.7.0
+  flex_color_picker: ^3.4.1    # accent color picker
+  cached_network_image: ^3.3.1
+  shimmer: ^3.0.0               # loading placeholder shimmer
+
+  # ── Navigation ─────────────────────────────────────────────────────────────
+  go_router: ^13.2.1
+
+  # ── Permissions ────────────────────────────────────────────────────────────
+  permission_handler: ^11.3.1
+
+  # ── Utilities ──────────────────────────────────────────────────────────────
+  equatable: ^2.0.5
+  rxdart: ^0.27.7
+  intl: ^0.19.0
+  shared_preferences: ^2.2.3   # lightweight prefs (theme, last.fm token)
+  package_info_plus: ^8.0.0
+  url_launcher: ^6.2.6
+  share_plus: ^9.0.0
+  file_picker: ^8.0.6           # import local playlist / m3u file
+  crypto: ^3.0.3               # MD5 for Last.fm API signature
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+  isar_generator: ^3.1.0+1
+  build_runner: ^2.4.9
+  riverpod_generator: ^2.4.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/images/
+    - assets/bin/
+
+  # Local font override (optional). When omitted, google_fonts fetches and caches Space Mono.
+  # fonts:
+  #   - family: SpaceMono
+  #     fonts:
+  #       - asset: assets/fonts/SpaceMono/SpaceMono-Regular.ttf
+  #       - asset: assets/fonts/SpaceMono/SpaceMono-Bold.ttf
+  #         weight: 700
+  #       - asset: assets/fonts/SpaceMono/SpaceMono-Italic.ttf
+  #         style: italic
+  #       - asset: assets/fonts/SpaceMono/SpaceMono-BoldItalic.ttf
+  #         weight: 700
+  #         style: italic
