@@ -56,12 +56,26 @@ class AudioPlayerController(
     private val context: Context,
     private val repository: MusicRepository
 ) {
+    val pcmProcessor = RealtimePcmAudioProcessor()
+
     private val audioAttributes = AudioAttributes.Builder()
         .setUsage(C.USAGE_MEDIA)
         .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
         .build()
 
-    val player: ExoPlayer = ExoPlayer.Builder(context.applicationContext)
+    private val renderersFactory = object : androidx.media3.exoplayer.DefaultRenderersFactory(context.applicationContext) {
+        override fun buildAudioSink(
+            context: Context,
+            enableFloatOutput: Boolean,
+            enableAudioTrackPlaybackParams: Boolean
+        ): androidx.media3.exoplayer.audio.AudioSink {
+            return androidx.media3.exoplayer.audio.DefaultAudioSink.Builder(context)
+                .setAudioProcessors(arrayOf(pcmProcessor))
+                .build()
+        }
+    }
+
+    val player: ExoPlayer = ExoPlayer.Builder(context.applicationContext, renderersFactory)
         .setAudioAttributes(audioAttributes, true)
         .setHandleAudioBecomingNoisy(true)
         .setWakeMode(C.WAKE_MODE_LOCAL)
@@ -133,6 +147,7 @@ class AudioPlayerController(
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 _uiState.value = _uiState.value.copy(isPlaying = isPlaying)
                 if (!isPlaying) {
+                    pcmProcessor.resetBands()
                     savePlaybackState()
                 } else {
                     ensureAudioEffects()

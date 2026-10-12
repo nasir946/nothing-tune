@@ -179,6 +179,10 @@ class MainActivity : ComponentActivity() {
                                     onHideTrack = { trackId ->
                                         repository.hideTrack(trackId, true)
                                         tracks = tracks.filterNot { it.id == trackId }
+                                    },
+                                    onHideMultipleTracks = { ids ->
+                                        repository.hideMultipleTracks(ids)
+                                        tracks = tracks.filterNot { ids.contains(it.id) }
                                     }
                                 )
                             }

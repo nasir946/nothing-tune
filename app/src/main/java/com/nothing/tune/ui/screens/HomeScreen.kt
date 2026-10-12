@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FastForward
@@ -49,6 +50,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -87,6 +89,7 @@ fun HomeScreen(
     onToggleFavorite: (trackId: Long, isFav: Boolean) -> Unit,
     onToggleAudiobook: (trackId: Long, isBook: Boolean) -> Unit,
     onHideTrack: (trackId: Long) -> Unit,
+    onHideMultipleTracks: (Set<Long>) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
@@ -109,6 +112,37 @@ fun HomeScreen(
         }
         if (filterSortState.audiobooksOnly) {
             list = list.filter { it.isAudiobook }
+        }
+
+        // Specific Year filter
+        val specY = filterSortState.specificYear
+        if (specY != null) {
+            list = list.filter { it.year == specY }
+        }
+        // Year Range filter
+        val minY = filterSortState.minYear
+        if (minY != null) {
+            list = list.filter { it.year >= minY }
+        }
+        val maxY = filterSortState.maxYear
+        if (maxY != null) {
+            list = list.filter { it.year <= maxY }
+        }
+
+        // Genre filter
+        val selGenre = filterSortState.selectedGenre
+        if (!selGenre.isNullOrBlank() && selGenre != "All") {
+            list = list.filter { it.genre.equals(selGenre, ignoreCase = true) }
+        }
+
+        // Duration Range filter
+        val minD = filterSortState.minDurationSec
+        if (minD != null) {
+            list = list.filter { (it.durationMs / 1000) >= minD }
+        }
+        val maxD = filterSortState.maxDurationSec
+        if (maxD != null) {
+            list = list.filter { (it.durationMs / 1000) <= maxD }
         }
 
         repository.sortTracks(list, filterSortState.sortOption, filterSortState.ascending)
@@ -256,7 +290,8 @@ fun HomeScreen(
                 onToggleAudiobook = onToggleAudiobook,
                 onHideTrack = { trackToHide = it },
                 onAddToQueue = { controller.addToQueue(it) },
-                onAddToPlaylist = { trackToAddToPlaylist = it }
+                onAddToPlaylist = { trackToAddToPlaylist = it },
+                onHideMultipleTracks = onHideMultipleTracks
             )
 
             1 -> AudiobooksContent(
@@ -402,8 +437,12 @@ private fun ForYouContent(
     onToggleAudiobook: (Long, Boolean) -> Unit,
     onHideTrack: (MusicTrack) -> Unit,
     onAddToQueue: (MusicTrack) -> Unit,
-    onAddToPlaylist: (MusicTrack) -> Unit
+    onAddToPlaylist: (MusicTrack) -> Unit,
+    onHideMultipleTracks: (Set<Long>) -> Unit
 ) {
+    var isMultiSelectMode by remember { mutableStateOf(false) }
+    val selectedTrackIds = remember { mutableStateListOf<Long>() }
+    var showMultiRemoveDialog by remember { mutableStateOf(false) }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 100.dp)
@@ -594,28 +633,123 @@ private fun ForYouContent(
             }
         }
 
-        // 4. "All Tracks" Section with 3-Dot Menus
+        // 4. "All Tracks" Section with Multi-Select Controls
         item {
             Spacer(modifier = Modifier.height(24.dp))
-            Text(
-                text = "All Tracks (${tracks.size})",
-                color = Color.White,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(vertical = 10.dp)
-            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (!isMultiSelectMode) {
+                    Text(
+                        text = "All Tracks (${tracks.size})",
+                        color = Color.White,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Select",
+                        color = Color(0xFFAAAAAA),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { isMultiSelectMode = true }
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "${selectedTrackIds.size} Selected",
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = if (selectedTrackIds.size == tracks.size) "Deselect All" else "Select All",
+                            color = Color(0xFF888888),
+                            fontSize = 12.sp,
+                            modifier = Modifier.clickable {
+                                if (selectedTrackIds.size == tracks.size) {
+                                    selectedTrackIds.clear()
+                                } else {
+                                    selectedTrackIds.clear()
+                                    selectedTrackIds.addAll(tracks.map { it.id })
+                                }
+                            }
+                        )
+                    }
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (selectedTrackIds.isNotEmpty()) {
+                            Text(
+                                text = "Remove (${selectedTrackIds.size})",
+                                color = AccentRed,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.clickable {
+                                    showMultiRemoveDialog = true
+                                }
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                        }
+                        Text(
+                            text = "Done",
+                            color = Color.White,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.clickable {
+                                isMultiSelectMode = false
+                                selectedTrackIds.clear()
+                            }
+                        )
+                    }
+                }
+            }
         }
 
         itemsIndexed(tracks) { index, track ->
             var menuExpanded by remember { mutableStateOf(false) }
+            val isSelected = selectedTrackIds.contains(track.id)
 
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { onPlayTrack(track, tracks) }
+                    .clickable {
+                        if (isMultiSelectMode) {
+                            if (isSelected) selectedTrackIds.remove(track.id) else selectedTrackIds.add(track.id)
+                        } else {
+                            onPlayTrack(track, tracks)
+                        }
+                    }
                     .padding(vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                if (isMultiSelectMode) {
+                    Box(
+                        modifier = Modifier
+                            .size(24.dp)
+                            .clip(CircleShape)
+                            .background(if (isSelected) Color.White else Color(0xFF1E1E22))
+                            .border(1.dp, if (isSelected) Color.White else Color(0xFF3E3E42), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (isSelected) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = null,
+                                tint = Color.Black,
+                                modifier = Modifier.size(15.dp)
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                }
+
                 NothingArtwork(
                     track = track,
                     modifier = Modifier.size(44.dp),
@@ -726,6 +860,38 @@ private fun ForYouContent(
                 }
             }
         }
+    }
+
+    if (showMultiRemoveDialog) {
+        AlertDialog(
+            onDismissRequest = { showMultiRemoveDialog = false },
+            title = { Text("Remove ${selectedTrackIds.size} Tracks", color = Color.White, fontWeight = FontWeight.Bold) },
+            containerColor = Color(0xFF1E1E22),
+            text = {
+                Text(
+                    text = "Hide ${selectedTrackIds.size} selected tracks from your library list?\n\n(Files will remain on your device and can be restored in Settings).",
+                    color = Color(0xFFCCCCCC),
+                    fontSize = 13.sp
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onHideMultipleTracks(selectedTrackIds.toSet())
+                        isMultiSelectMode = false
+                        selectedTrackIds.clear()
+                        showMultiRemoveDialog = false
+                    }
+                ) {
+                    Text("Remove All", color = AccentRed, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showMultiRemoveDialog = false }) {
+                    Text("Cancel", color = Color.White)
+                }
+            }
+        )
     }
 }
 

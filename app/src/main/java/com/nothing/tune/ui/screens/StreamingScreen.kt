@@ -41,11 +41,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import com.nothing.tune.network.ExtractedAudioMedia
 import com.nothing.tune.network.OnlineMediaExtractor
 import com.nothing.tune.player.AudioPlayerController
@@ -227,6 +229,19 @@ fun StreamingScreen(
                                 .border(1.dp, Color(0xFF333336), RoundedCornerShape(14.dp))
                                 .padding(14.dp)
                         ) {
+                            if (!media.thumbnailUrl.isNullOrBlank()) {
+                                AsyncImage(
+                                    model = media.thumbnailUrl,
+                                    contentDescription = media.title,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(140.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                )
+                                Spacer(modifier = Modifier.height(10.dp))
+                            }
+
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
                                     text = media.platform.uppercase(),

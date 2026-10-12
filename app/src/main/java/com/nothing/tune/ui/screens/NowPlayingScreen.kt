@@ -92,7 +92,7 @@ fun NowPlayingScreen(
     modifier: Modifier = Modifier
 ) {
     val uiState by controller.uiState.collectAsState()
-    val freqBands by controller.visualizer.frequencyBands.collectAsState()
+    val freqBands by controller.pcmProcessor.frequencyBands.collectAsState()
     val track = uiState.currentTrack ?: return
 
     var showLyricsSheet by remember { mutableStateOf(false) }

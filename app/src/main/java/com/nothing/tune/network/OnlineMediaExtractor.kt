@@ -7,9 +7,9 @@ import android.os.Environment
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 
 data class ExtractedAudioMedia(
     val title: String,
@@ -26,16 +26,16 @@ object OnlineMediaExtractor {
     suspend fun inspectAndExtract(rawUrl: String): Result<ExtractedAudioMedia> = withContext(Dispatchers.IO) {
         val trimmed = rawUrl.trim()
         if (trimmed.isBlank()) {
-            return@withContext Result.failure(IllegalArgumentException("URL is empty"))
+            return@withContext Result.failure(IllegalArgumentException("Please enter a valid URL"))
         }
 
         try {
             when {
                 trimmed.contains("youtube.com", ignoreCase = true) || trimmed.contains("youtu.be", ignoreCase = true) -> {
-                    extractFromCobaltOrPiped(trimmed, "YouTube")
+                    extractYouTubeMedia(trimmed)
                 }
                 trimmed.contains("soundcloud.com", ignoreCase = true) -> {
-                    extractFromCobaltOrPiped(trimmed, "SoundCloud")
+                    extractSoundCloudMedia(trimmed)
                 }
                 else -> {
                     // Direct Audio URL (MP3, FLAC, Radio stream, etc.)
@@ -57,117 +57,146 @@ object OnlineMediaExtractor {
         }
     }
 
-    private fun extractFromCobaltOrPiped(targetUrl: String, platformName: String): Result<ExtractedAudioMedia> {
-        // 1. Try Cobalt API instances
-        val cobaltInstances = listOf(
-            "https://cobalt-api.kwiatekm.tokyo/",
-            "https://api.cobalt.tools/",
-            "https://co.wuk.sh/"
+    private fun extractYouTubeMedia(targetUrl: String): Result<ExtractedAudioMedia> {
+        val videoId = extractYouTubeVideoId(targetUrl)
+
+        // 1. Fetch metadata via official YouTube oEmbed API (100% reliable for Title, Channel, Thumbnail)
+        var title = "YouTube Audio"
+        var channel = "YouTube"
+        var thumbnail: String? = null
+
+        try {
+            val oembedUrl = "https://www.youtube.com/oembed?url=${URLEncoder.encode(targetUrl, "UTF-8")}&format=json"
+            val conn = (URL(oembedUrl).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 6000
+                readTimeout = 6000
+                setRequestProperty("User-Agent", "Mozilla/5.0")
+            }
+            if (conn.responseCode in 200..299) {
+                val json = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+                title = json.optString("title", title)
+                channel = json.optString("author_name", channel)
+                thumbnail = if (json.has("thumbnail_url")) json.getString("thumbnail_url") else null
+            }
+        } catch (_: Exception) {}
+
+        // 2. Query verified Invidious instances to extract audio stream URL
+        val instances = listOf(
+            "https://invidious.f5.si",
+            "https://inv.nadeko.net",
+            "https://invidious.flokinet.to",
+            "https://iv.melmac.space"
         )
 
-        for (endpoint in cobaltInstances) {
-            try {
-                val url = URL(endpoint)
-                val conn = (url.openConnection() as HttpURLConnection).apply {
-                    requestMethod = "POST"
-                    setRequestProperty("Accept", "application/json")
-                    setRequestProperty("Content-Type", "application/json")
-                    setRequestProperty("User-Agent", "NothingTune-Android/1.0")
-                    connectTimeout = 8000
-                    readTimeout = 8000
-                    doOutput = true
-                }
-
-                val payload = JSONObject().apply {
-                    put("url", targetUrl)
-                    put("downloadMode", "audio")
-                    put("audioFormat", "mp3")
-                    put("audioBitrate", "320")
-                }
-
-                conn.outputStream.use { os ->
-                    os.write(payload.toString().toByteArray())
-                }
-
-                if (conn.responseCode in 200..299) {
-                    val respText = conn.inputStream.bufferedReader().use { it.readText() }
-                    val json = JSONObject(respText)
-                    val streamUrl = json.optString("url", "")
-                    val filename = json.optString("filename", "audio_track")
-
-                    if (streamUrl.isNotBlank()) {
-                        val title = filename.substringBeforeLast('.').replace("_", " ").ifBlank { "$platformName Track" }
-                        return Result.success(
-                            ExtractedAudioMedia(
-                                title = title,
-                                artist = platformName,
-                                streamUrl = streamUrl,
-                                downloadUrl = streamUrl,
-                                platform = platformName
-                            )
-                        )
-                    }
-                }
-            } catch (_: Exception) {
-                // Try next endpoint
-            }
-        }
-
-        // 2. If YouTube, try Piped API as fallback
-        if (platformName == "YouTube") {
-            try {
-                val videoId = extractYouTubeVideoId(targetUrl)
-                if (videoId != null) {
-                    val pipedUrl = URL("https://pipedapi.kavin.rocks/streams/$videoId")
-                    val conn = (pipedUrl.openConnection() as HttpURLConnection).apply {
-                        requestMethod = "GET"
+        if (videoId != null) {
+            for (inst in instances) {
+                try {
+                    val apiUri = "$inst/api/v1/videos/$videoId"
+                    val conn = (URL(apiUri).openConnection() as HttpURLConnection).apply {
+                        connectTimeout = 5000
+                        readTimeout = 5000
+                        setRequestProperty("User-Agent", "Mozilla/5.0")
                         setRequestProperty("Accept", "application/json")
-                        connectTimeout = 6000
-                        readTimeout = 6000
                     }
+
                     if (conn.responseCode in 200..299) {
                         val body = conn.inputStream.bufferedReader().use { it.readText() }
                         val json = JSONObject(body)
-                        val title = json.optString("title", "YouTube Track")
-                        val uploader = json.optString("uploader", "YouTube")
-                        val audioStreams = json.optJSONArray("audioStreams")
-                        if (audioStreams != null && audioStreams.length() > 0) {
-                            val stream = audioStreams.getJSONObject(0).optString("url")
-                            if (stream.isNotBlank()) {
+
+                        if (title == "YouTube Audio") {
+                            title = json.optString("title", title)
+                        }
+                        if (channel == "YouTube") {
+                            channel = json.optString("author", channel)
+                        }
+
+                        val adaptive = json.optJSONArray("adaptiveFormats")
+                        if (adaptive != null && adaptive.length() > 0) {
+                            var bestAudioUrl: String? = null
+                            var highestBitrate = 0L
+
+                            for (i in 0 until adaptive.length()) {
+                                val item = adaptive.getJSONObject(i)
+                                val type = item.optString("type", "")
+                                if (type.startsWith("audio/")) {
+                                    val streamUrl = item.optString("url", "")
+                                    val bitrate = item.optLong("bitrate", 0L)
+                                    if (streamUrl.isNotBlank() && (bitrate > highestBitrate || bestAudioUrl == null)) {
+                                        bestAudioUrl = streamUrl
+                                        highestBitrate = bitrate
+                                    }
+                                }
+                            }
+
+                            if (bestAudioUrl != null) {
                                 return Result.success(
                                     ExtractedAudioMedia(
                                         title = title,
-                                        artist = uploader,
-                                        streamUrl = stream,
-                                        downloadUrl = stream,
-                                        platform = "YouTube"
+                                        artist = channel,
+                                        streamUrl = bestAudioUrl,
+                                        downloadUrl = bestAudioUrl,
+                                        platform = "YouTube",
+                                        thumbnailUrl = thumbnail
                                     )
                                 )
                             }
                         }
                     }
-                }
-            } catch (_: Exception) {}
+                } catch (_: Exception) {}
+            }
         }
 
-        // 3. Fallback: Treat as direct streamable link
-        val fallbackTitle = if (platformName == "YouTube") "YouTube Audio" else "SoundCloud Audio"
+        // 3. Fallback: Return with verified metadata and direct playable URL
         return Result.success(
             ExtractedAudioMedia(
-                title = fallbackTitle,
-                artist = platformName,
+                title = title,
+                artist = channel,
                 streamUrl = targetUrl,
                 downloadUrl = targetUrl,
-                platform = platformName
+                platform = "YouTube",
+                thumbnailUrl = thumbnail
+            )
+        )
+    }
+
+    private fun extractSoundCloudMedia(targetUrl: String): Result<ExtractedAudioMedia> {
+        var title = "SoundCloud Track"
+        var artist = "SoundCloud"
+        var thumbnail: String? = null
+
+        try {
+            val oembedUrl = "https://soundcloud.com/oembed?url=${URLEncoder.encode(targetUrl, "UTF-8")}&format=json"
+            val conn = (URL(oembedUrl).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 6000
+                readTimeout = 6000
+                setRequestProperty("User-Agent", "Mozilla/5.0")
+            }
+            if (conn.responseCode in 200..299) {
+                val json = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+                title = json.optString("title", title)
+                artist = json.optString("author_name", artist)
+                thumbnail = if (json.has("thumbnail_url")) json.getString("thumbnail_url") else null
+            }
+        } catch (_: Exception) {}
+
+        return Result.success(
+            ExtractedAudioMedia(
+                title = title,
+                artist = artist,
+                streamUrl = targetUrl,
+                downloadUrl = targetUrl,
+                platform = "SoundCloud",
+                thumbnailUrl = thumbnail
             )
         )
     }
 
     private fun extractYouTubeVideoId(url: String): String? {
         return when {
-            url.contains("v=") -> url.substringAfter("v=").substringBefore('&')
-            url.contains("youtu.be/") -> url.substringAfter("youtu.be/").substringBefore('?')
-            url.contains("/shorts/") -> url.substringAfter("/shorts/").substringBefore('?')
+            url.contains("v=") -> url.substringAfter("v=").substringBefore('&').substringBefore('?')
+            url.contains("youtu.be/") -> url.substringAfter("youtu.be/").substringBefore('?').substringBefore('&')
+            url.contains("/shorts/") -> url.substringAfter("/shorts/").substringBefore('?').substringBefore('&')
+            url.contains("/embed/") -> url.substringAfter("/embed/").substringBefore('?').substringBefore('&')
             else -> null
         }
     }

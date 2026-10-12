@@ -32,6 +32,7 @@ class MusicRepository(private val context: Context) {
 
         val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0 OR ${MediaStore.Audio.Media.DURATION} > 5000"
         val hiddenIds = getHiddenTrackIds()
+        val excludedFolders = getExcludedFolders()
 
         try {
             context.contentResolver.query(
@@ -54,11 +55,14 @@ class MusicRepository(private val context: Context) {
                     val id = cursor.getLong(idCol)
                     if (hiddenIds.contains(id)) continue // Skip hidden tracks
 
+                    val path = if (dataCol >= 0) cursor.getString(dataCol) ?: "" else ""
+                    if (excludedFolders.isNotEmpty() && excludedFolders.any { f -> path.contains(f, ignoreCase = true) }) {
+                        continue // Skip tracks in excluded folders
+                    }
                     val title = cursor.getString(titleCol) ?: "Unknown"
                     val artist = cursor.getString(artistCol) ?: "Unknown Artist"
                     val album = cursor.getString(albumCol) ?: "Unknown Album"
                     val duration = cursor.getLong(durCol)
-                    val path = if (dataCol >= 0) cursor.getString(dataCol) ?: "" else ""
                     val albumId = cursor.getLong(albumIdCol)
 
                     val year = if (yearCol >= 0) cursor.getInt(yearCol) else 0
@@ -146,10 +150,38 @@ class MusicRepository(private val context: Context) {
         prefs.edit().putString("hidden_track_ids", current.joinToString(",")).apply()
     }
 
+    fun hideMultipleTracks(trackIds: Set<Long>) {
+        val current = getHiddenTrackIds().toMutableSet()
+        current.addAll(trackIds)
+        prefs.edit().putString("hidden_track_ids", current.joinToString(",")).apply()
+    }
+
     fun getHiddenTrackIds(): Set<Long> {
         val raw = prefs.getString("hidden_track_ids", "") ?: ""
         if (raw.isBlank()) return emptySet()
         return raw.split(",").mapNotNull { it.trim().toLongOrNull() }.toSet()
+    }
+
+    // ── Excluded Folders Management ───────────────────────────────────────────
+
+    fun getExcludedFolders(): Set<String> {
+        val raw = prefs.getString("excluded_folders", "") ?: ""
+        if (raw.isBlank()) return emptySet()
+        return raw.split(";").filter { it.isNotBlank() }.toSet()
+    }
+
+    fun addExcludedFolder(folderPath: String) {
+        val trimmed = folderPath.trim()
+        if (trimmed.isBlank()) return
+        val current = getExcludedFolders().toMutableSet()
+        current.add(trimmed)
+        prefs.edit().putString("excluded_folders", current.joinToString(";")).apply()
+    }
+
+    fun removeExcludedFolder(folderPath: String) {
+        val current = getExcludedFolders().toMutableSet()
+        current.remove(folderPath.trim())
+        prefs.edit().putString("excluded_folders", current.joinToString(";")).apply()
     }
 
     // ── Sorting & Filtering Helpers ───────────────────────────────────────────

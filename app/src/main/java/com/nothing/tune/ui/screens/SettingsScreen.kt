@@ -5,6 +5,7 @@ import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -39,6 +40,8 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -47,6 +50,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -633,6 +637,10 @@ fun SettingsScreen(
 
     // ── Downloads & Library Sheet ──────────────────────────────────────────────
     if (showDownloadsSheet) {
+        var excludedFoldersVersion by remember { mutableIntStateOf(0) }
+        val excludedFolders = remember(excludedFoldersVersion) { repository.getExcludedFolders() }
+        var newFolderInput by remember { mutableStateOf("") }
+
         ModalBottomSheet(
             onDismissRequest = { showDownloadsSheet = false },
             sheetState = rememberModalBottomSheetState(),
@@ -644,29 +652,29 @@ fun SettingsScreen(
                     .padding(24.dp)
             ) {
                 Text(
-                    text = "OFFLINE STORAGE & HIDDEN TRACKS",
+                    text = "LIBRARY SCAN & EXCLUDED FOLDERS",
                     color = Color.White,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 2.sp
                 )
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
                 val hiddenCount = repository.getHiddenTrackIds().size
                 Text(
                     text = "Storage Location: /storage/emulated/0/Music\nHidden Tracks Count: $hiddenCount",
                     color = Color(0xFFCCCCCC),
                     fontSize = 13.sp,
-                    lineHeight = 22.sp
+                    lineHeight = 20.sp
                 )
 
                 if (hiddenCount > 0) {
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(44.dp)
-                            .clip(RoundedCornerShape(22.dp))
+                            .height(42.dp)
+                            .clip(RoundedCornerShape(21.dp))
                             .background(Color.White)
                             .clickable {
                                 repository.getHiddenTrackIds().forEach { id ->
@@ -678,6 +686,129 @@ fun SettingsScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Text("Restore All Hidden Tracks", color = Color.Black, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                Text(
+                    text = "EXCLUDED FOLDERS FROM SCAN",
+                    color = Color(0xFFAAAAAA),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // List of currently excluded folders
+                if (excludedFolders.isEmpty()) {
+                    Text(
+                        text = "No folders excluded. All detected music folders are scanned.",
+                        color = Color(0xFF888888),
+                        fontSize = 12.sp
+                    )
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        excludedFolders.forEach { folder ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color(0xFF1E1E22))
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(text = folder, color = Color.White, fontSize = 13.sp)
+                                Text(
+                                    text = "✕ Remove",
+                                    color = AccentRed,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.clickable {
+                                        repository.removeExcludedFolder(folder)
+                                        excludedFoldersVersion++
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Quick add common folders
+                Text(
+                    text = "Quick Exclude:",
+                    color = Color(0xFF888888),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf("WhatsApp", "Telegram", "Recordings", "Voice Recorder", "Notifications").forEach { quickF ->
+                        val isEx = excludedFolders.contains(quickF)
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(if (isEx) AccentRed.copy(alpha = 0.2f) else Color(0xFF1E1E22))
+                                .border(1.dp, if (isEx) AccentRed else Color(0xFF2E2E32), RoundedCornerShape(14.dp))
+                                .clickable {
+                                    if (isEx) repository.removeExcludedFolder(quickF) else repository.addExcludedFolder(quickF)
+                                    excludedFoldersVersion++
+                                }
+                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Text(
+                                text = if (isEx) "✓ $quickF" else "+ $quickF",
+                                color = if (isEx) AccentRed else Color(0xFFCCCCCC),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Custom folder input
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = newFolderInput,
+                        onValueChange = { newFolderInput = it },
+                        placeholder = { Text("Custom folder keyword / path", color = Color.Gray, fontSize = 12.sp) },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = Color.White,
+                            unfocusedBorderColor = Color(0xFF333336)
+                        ),
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .height(50.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color.White)
+                            .clickable {
+                                if (newFolderInput.isNotBlank()) {
+                                    repository.addExcludedFolder(newFolderInput.trim())
+                                    excludedFoldersVersion++
+                                    newFolderInput = ""
+                                }
+                            }
+                            .padding(horizontal = 16.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("Add", color = Color.Black, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     }
                 }
 
